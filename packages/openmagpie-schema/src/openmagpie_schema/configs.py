@@ -149,12 +149,45 @@ class HackerNewsCommentSourceSpec(_HackerNewsSpec):
         return f'HN comments: "{self.query}"'
 
 
+class YouTubeSearchSourceSpec(BaseModel):
+    """Identity of one YouTube search stream. Bound to YouTubeSearchConnector.
+
+    `query` is the search expression (keywords, phrases, operators like
+    `from:`, `channel:`); it is REQUIRED and NON-BLANK so a source always
+    carries a server-side pre-filter before any per-item LLM cost.
+    `count` caps the per-cycle fetch (capped at 50 by yt-dlp for search).
+    """
+
+    SOURCE_KIND: ClassVar[str] = "youtube_search"
+    URL_FIELDS: ClassVar[tuple[str, ...]] = ()  # no operator-supplied URL to SSRF-check
+
+    kind: Literal["youtube_search"] = "youtube_search"
+    query: str = Field(min_length=1)
+    count: int = Field(default=20, ge=1, le=50)
+
+    @field_validator("query")
+    @classmethod
+    def _query_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("youtube_search requires a non-blank query (the firehose guard)")
+        return v
+
+    def display(self) -> str:
+        return f'YouTube search: "{self.query}"'
+
+
+>>>>>>> 050ffe4 (feat(sources): add YouTube search connector via yt-dlp)
 # The built-ins as a discriminated union over `kind` (defined before the plugin
 # fallback so the built-in kind set can be derived from it below). A built-in kind
 # with a malformed spec fails its typed member here and is rejected by the fallback,
 # so it surfaces as a validation error rather than being absorbed as a raw blob.
 _BuiltinSourceSpec = Annotated[
-    RedditSubredditSourceSpec | RssSourceSpec | HackerNewsFeedSourceSpec | HackerNewsCommentSourceSpec,
+    RedditSubredditSourceSpec
+    | RssSourceSpec
+    | HackerNewsFeedSourceSpec
+    | HackerNewsCommentSourceSpec
+    | YouTubeSearchSourceSpec,
     Field(discriminator="kind"),
 ]
 
