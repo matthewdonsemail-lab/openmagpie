@@ -177,7 +177,6 @@ class YouTubeSearchSourceSpec(BaseModel):
         return f'YouTube search: "{self.query}"'
 
 
->>>>>>> 050ffe4 (feat(sources): add YouTube search connector via yt-dlp)
 # The built-ins as a discriminated union over `kind` (defined before the plugin
 # fallback so the built-in kind set can be derived from it below). A built-in kind
 # with a malformed spec fails its typed member here and is rejected by the fallback,

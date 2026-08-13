@@ -222,19 +222,13 @@ Social listening is a crowded market (Brand24, Mention, Octolens, Syften, and to
 
 | Layer | Shipped |
 |---|---|
-<<<<<<< HEAD
-| Connectors | Reddit (`reddit_subreddit`), Hacker News (`hn_feed`, `hn_comment`), RSS/Atom (`rss`) |
-=======
 | Connectors | X/Twitter (`twitter_search`), YouTube (`youtube_search`), Reddit (`reddit_subreddit`), Hacker News (`hn_feed`, `hn_comment`), RSS/Atom (`rss`) |
->>>>>>> 96258f8 (docs(readme): add YouTube connector to shipped features)
 | Engines | Any OpenAI-compatible `/v1` API: Ollama, vLLM, llama.cpp, LM Studio, OpenAI, ... |
 | Action kinds | `semantic_filter` (LLM-judged), `webhook`, `log` |
 | Delivery modes | instant, digest |
 | Webhook methods | `POST`, `PUT`, `PATCH` |
 | Delivery audit | per-attempt `WatchActionDelivery` |
 
-<<<<<<< HEAD
-=======
 ## What we've done
 
 X/Twitter listening is the first connector added beyond the original Reddit / HN / RSS set. What shipped in this branch:
@@ -255,7 +249,6 @@ YouTube listening follows:
 
 Next up on the roadmap: **Facebook, TikTok, and Instagram connectors** (soon to be added), then Slack, LinkedIn, GitHub, Bluesky, and Mastodon.
 
->>>>>>> 96258f8 (docs(readme): add YouTube connector to shipped features)
 ## Roadmap
 
 - **More connectors**: Slack, LinkedIn, GitHub, Bluesky, Mastodon, and X.
