@@ -222,7 +222,7 @@ Social listening is a crowded market (Brand24, Mention, Octolens, Syften, and to
 
 | Layer | Shipped |
 |---|---|
-| Connectors | X/Twitter (`twitter_search`), YouTube (`youtube_search`), Reddit (`reddit_subreddit`), Hacker News (`hn_feed`, `hn_comment`), RSS/Atom (`rss`) |
+| Connectors | YouTube (`youtube_search`), Reddit (`reddit_subreddit`), Hacker News (`hn_feed`, `hn_comment`), RSS/Atom (`rss`) |
 | Engines | Any OpenAI-compatible `/v1` API: Ollama, vLLM, llama.cpp, LM Studio, OpenAI, ... |
 | Action kinds | `semantic_filter` (LLM-judged), `webhook`, `log` |
 | Delivery modes | instant, digest |
