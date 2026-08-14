@@ -97,6 +97,36 @@ class NewTweetPayload(FeedItemPayload):
     media: list[dict[str, object]] = []
 
 
+class NewRepoEventPayload(FeedItemPayload):
+    """`new_repo_event`: a newly created GitHub repository observed via the
+    public /events firehose (GitHubEventsConnector). `title` is the repo name
+    (e.g. `langfuse/langfuse`); `content` is the description + language +
+    topics + README excerpt (the engine's judgeable body). The repo's
+    `full_name` is the `external_id` (same dedup key as the Search connector,
+    so a repo discovered by both radar and search collapses to one FeedItem).
+
+    `event_type` "create" indicates a brand-new repo (CreateEvent +
+    ref_type=="repository"); "push" indicates fresh code on an existing repo.
+    `readme` carries the full README text when fetched, `readme` is "" when
+    the repo has none or the fetch failed."""
+
+    kind: Literal["new_repo_event"]  # required, so a non-events dump can't match here
+    full_name: str = ""
+    owner: str = ""
+    stars: int = 0
+    forks: int = 0
+    open_issues: int = 0
+    language: str = ""
+    topics: list[str] = Field(default_factory=list)
+    homepage: str = ""
+    license_name: str = ""
+    readme: str = ""
+    event_type: str = "create"
+    pushed_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
 # Tried left-to-right so a dump resolves to its concrete variant (matched on the
 # required `kind` literal) and only falls to the permissive base when no variant
 # claims it. Variants REQUIRE their `kind`, so an empty / kind-less dict can't
@@ -112,6 +142,7 @@ FeedItemData = Annotated[
     | HackerNewsFeedPayload
     | HackerNewsCommentPayload
     | NewTweetPayload
+    | NewRepoEventPayload
     | FeedItemPayload,
     Field(union_mode="left_to_right"),
 ]
