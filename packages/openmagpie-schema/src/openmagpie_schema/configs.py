@@ -188,6 +188,45 @@ class TwitterSearchSourceSpec(BaseModel):
         return f'X search: "{self.query}"'
 
 
+class GitHubSearchSourceSpec(BaseModel):
+    """Identity of one GitHub repository search stream. Bound to GitHubSearchConnector.
+
+    `query` is the GitHub repository search expression (the `q` parameter
+    accepted by `GET /search/repositories` — keywords, qualifiers like
+    `language:typescript`, `stars:>100`, `topic:openai`); it is REQUIRED and
+    NON-BLANK so a source always carries a server-side pre-filter before any
+    per-item LLM cost (same discipline as hn_comment / twitter_search: a
+    blank query would be the whole-repo firehose). `sort` picks the result
+    ordering: `stars` (most-starred first, the listener's default for a
+    ranked sweep) or `updated` (most recently updated first). `min_stars`
+    is a cheap numeric pre-filter the connector folds into the query (it is
+    also how we keep the default result window useful without a qualifier in
+    the operator's query). `count` caps the per-cycle fetch (GitHub's search
+    API allows up to 100 per page; the connector walks at most one page in
+    phase 1).
+    """
+
+    SOURCE_KIND: ClassVar[str] = "github_search"
+    URL_FIELDS: ClassVar[tuple[str, ...]] = ()  # no operator-supplied URL to SSRF-check
+
+    kind: Literal["github_search"] = "github_search"
+    query: str = Field(min_length=1)
+    sort: Literal["stars", "updated"] = "stars"
+    min_stars: int = Field(default=0, ge=0)
+    count: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("query")
+    @classmethod
+    def _query_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("github_search requires a non-blank query (the firehose guard)")
+        return v
+
+    def display(self) -> str:
+        return f'GitHub search: "{self.query}"'
+
+
 # The built-ins as a discriminated union over `kind` (defined before the plugin
 # fallback so the built-in kind set can be derived from it below). A built-in kind
 # with a malformed spec fails its typed member here and is rejected by the fallback,
@@ -197,7 +236,8 @@ _BuiltinSourceSpec = Annotated[
     | RssSourceSpec
     | HackerNewsFeedSourceSpec
     | HackerNewsCommentSourceSpec
-    | TwitterSearchSourceSpec,
+    | TwitterSearchSourceSpec
+    | GitHubSearchSourceSpec,
     Field(discriminator="kind"),
 ]
 
