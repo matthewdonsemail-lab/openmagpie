@@ -127,6 +127,34 @@ class NewRepoEventPayload(FeedItemPayload):
     updated_at: str = ""
 
 
+class NewRepoPayload(FeedItemPayload):
+    """`new_repo`: a GitHub repository observed via repository search
+    (GitHubSearchConnector). `title` is the repo name (e.g.
+    `langfuse/langfuse`); `content` is the description + language + topics
+    (the engine's judgeable body). The repo's `full_name` is the
+    `external_id` (same dedup key as the Events connector, so a repo
+    discovered by both search and radar collapses to one FeedItem).
+
+    Unlike `NewRepoEventPayload`, this variant has no `readme` or
+    `event_type` fields — the search API returns a snapshot of the
+    repo's metadata at search time, not a live event.
+    """
+
+    kind: Literal["new_repo"]  # required, so a non-search dump can't match here
+    full_name: str = ""
+    owner: str = ""
+    stars: int = 0
+    forks: int = 0
+    open_issues: int = 0
+    language: str = ""
+    topics: list[str] = Field(default_factory=list)
+    homepage: str = ""
+    license_name: str = ""
+    pushed_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
 # Tried left-to-right so a dump resolves to its concrete variant (matched on the
 # required `kind` literal) and only falls to the permissive base when no variant
 # claims it. Variants REQUIRE their `kind`, so an empty / kind-less dict can't
@@ -143,6 +171,7 @@ FeedItemData = Annotated[
     | HackerNewsCommentPayload
     | NewTweetPayload
     | NewRepoEventPayload
+    | NewRepoPayload
     | FeedItemPayload,
     Field(union_mode="left_to_right"),
 ]
