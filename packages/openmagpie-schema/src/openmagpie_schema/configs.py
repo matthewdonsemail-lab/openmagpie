@@ -188,6 +188,44 @@ class TwitterSearchSourceSpec(BaseModel):
         return f'X search: "{self.query}"'
 
 
+
+class FacebookSearchSourceSpec(BaseModel):
+    """Identity of one Facebook page/group search stream. Bound to FacebookSearchConnector.
+
+    `page_url` is the Facebook page or group URL to monitor.
+    `count` caps the per-cycle fetch. `lang` optionally narrows to posts in one language.
+    `cookies_file` is a path to exported JSON cookies for auth.
+    `terms` filters posts to only those containing any of the keywords.
+    """
+
+    SOURCE_KIND: ClassVar[str] = "facebook_search"
+    URL_FIELDS: ClassVar[tuple[str, ...]] = ("page_url",)
+
+    kind: Literal["facebook_search"] = "facebook_search"
+    page_url: str = Field(min_length=1)
+    count: int = Field(default=20, ge=1, le=100)
+    lang: str = ""
+    cookies_file: str = ""
+    terms: list[str] = Field(default_factory=list)
+
+    @field_validator("page_url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("facebook_search requires a non-blank page_url")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("facebook_search page_url must start with http:// or https://")
+        return value
+
+    @field_validator("lang")
+    @classmethod
+    def _lang_normalize(cls, value: str) -> str:
+        return value.strip().lower()
+
+    def display(self) -> str:
+        return f'FB: "{self.page_url}"'
+
 # The built-ins as a discriminated union over `kind` (defined before the plugin
 # fallback so the built-in kind set can be derived from it below). A built-in kind
 # with a malformed spec fails its typed member here and is rejected by the fallback,
@@ -197,7 +235,8 @@ _BuiltinSourceSpec = Annotated[
     | RssSourceSpec
     | HackerNewsFeedSourceSpec
     | HackerNewsCommentSourceSpec
-    | TwitterSearchSourceSpec,
+    | TwitterSearchSourceSpec
+    | FacebookSearchSourceSpec,
     Field(discriminator="kind"),
 ]
 

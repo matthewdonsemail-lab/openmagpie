@@ -97,10 +97,17 @@ def map_twikit_error(exc: TwitterException, context: dict[str, Any] | None = Non
     # X's SearchTimeline intermittently 404s with an EMPTY body (observed
     # repeatedly on live polls: same query succeeds on retry seconds later,
     # independent of session/cookies/query). That is a transient upstream
-    # flake on the search endpoint, NOT a deleted tweet/user — a genuine
+    # flake on the search endpoint, NOT a deleted tweet/user: a genuine
     # not_found carries a message. Retryable so the ops layer backs off
     # instead of treating the source as dead.
-    if isinstance(exc, NotFound) and not str(exc).strip():
+    #
+    # twikit 2.3.3 renders every HTTP error as `status: <code>, message:
+    # "<body>"` (client/client.py and guest/client.py), so str(exc) is NEVER
+    # empty, not even for an empty body. Detect the empty BODY via its
+    # rendering instead: an empty body produces the trailing payload
+    # `message: ""`; any other rendering carried response text, so the 404
+    # is real.
+    if isinstance(exc, NotFound) and str(exc).rstrip().endswith('message: ""'):
         return ListenerError(
             code="search_timeline_unavailable",
             message="X SearchTimeline returned an empty 404 (transient upstream flake)",

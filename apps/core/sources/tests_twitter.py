@@ -12,12 +12,13 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 from pydantic import ValidationError
+from twikit.errors import NotFound
 
 from openmagpie_schema.configs import TwitterSearchSourceSpec
 from sources.connectors.base import ConnectorParseError
 from sources.connectors.twitter.client import ListenerErrorWrapper
 from sources.connectors.twitter.connector import TwitterSearchConnector
-from sources.connectors.twitter.errors import ListenerError
+from sources.connectors.twitter.errors import ListenerError, map_twikit_error
 from sources.connectors.twitter.payloads import NewTweetPayload
 
 
@@ -113,15 +114,10 @@ class TwitterSearchConnectorTests(SimpleTestCase):
 
     def test_empty_404_maps_to_retryable_connector_error(self):
         """X SearchTimeline empty-404 is a transient flake, not a dead tweet."""
-        from sources.connectors.twitter.errors import ListenerError
-
         spec = TwitterSearchSourceSpec(kind="twitter_search", query="x")
-        err = ListenerError(
-            code="search_timeline_unavailable",
-            message="X SearchTimeline returned an empty 404 (transient upstream flake)",
-            retryable=True,
-            action="retry with backoff",
-        )
+        # twikit renders an empty-body 404 as 'status: 404, message: ""' (see
+        # client/client.py: message = f'status: {code}, message: "{text}"').
+        err = map_twikit_error(NotFound('status: 404, message: ""'))
         client = mock.Mock()
         client.search.side_effect = ListenerErrorWrapper(err)
         conn = TwitterSearchConnector()
@@ -135,6 +131,23 @@ class TwitterSearchConnectorTests(SimpleTestCase):
         conn, client = self._connector([_FakeTweet("1")])
         list(conn.poll(spec, since=None))
         client.search.assert_called_once_with("x", "Top", 20)
+
+
+class MapTwikitErrorTests(SimpleTestCase):
+    """map_twikit_error: twikit's NotFound rendering vs the empty-404 flake."""
+
+    def test_empty_body_404_maps_to_retryable(self):
+        """An empty-body 404 is the transient flake: retryable, not not_found."""
+        err = map_twikit_error(NotFound('status: 404, message: ""'))
+        self.assertEqual(err.code, "search_timeline_unavailable")
+        self.assertTrue(err.retryable)
+        self.assertIn("retry with backoff", err.action)
+
+    def test_message_404_stays_non_retryable_not_found(self):
+        """A message-bearing 404 is a real not_found, not the flake."""
+        err = map_twikit_error(NotFound('status: 404, message: "This tweet does not exist"'))
+        self.assertEqual(err.code, "not_found")
+        self.assertFalse(err.retryable)
 
 
 class NewTweetPayloadTests(SimpleTestCase):

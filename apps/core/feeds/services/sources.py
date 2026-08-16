@@ -1,341 +1,78 @@
-"""SourceService: account-scoped CRUD on Source rows for a Feed.
+"""Connector registry. Maps kind string → Connector instance.
 
-Mirrors `FeedService`. Operates only on curated feeds (the only feed
-kind today); the kind check is at the boundary so a future kind can
-opt out cleanly.
-
-The mutation surface is intentionally narrow:
-
-  set_sources(feed, items, dry_run) replace-mode reconcile;
-      additive + drops missing + preserves watermarks on persisted
-  remove(feed, source_id)            by row id; idempotent
-
-There is no single-row `add` ; the create-time path (FeedService.create
-with starter sources) and `set_sources` already cover what an add
-would do, and a bespoke "one source" mutation surface invites
-flag-per-kind UX that scales badly.
-
-Uniqueness is enforced by `(account_id, feed_id, spec_hash)` where
-`spec_hash` is `sha256(canonical_spec(spec))`. Operators never see
-the hash ; it's pure dedup plumbing.
+Values are `Connector[Any]`: each concrete connector is generic over its
+own spec variant, but the registry dispatches by `kind` string so the
+variant is erased here ; the call seam (`polling.py`) passes a runtime
+`SourceSpec` that the kind guarantees matches the stored connector.
 """
 
-import builtins
-import hashlib
-import logging
-from collections.abc import Iterator
-from datetime import datetime
+from typing import Any
 
-import ulid
-from django.db import transaction
-from django.db.models import Count, Q
+from common.models import reject_bad_plugin_kind
+from sources.connectors import (
+    Connector,
+    FacebookConnector,
+    HackerNewsCommentConnector,
+    HackerNewsFeedConnector,
+    RedditSubRedditConnector,
+    RssConnector,
+    TwitterSearchConnector,
+)
 
-from common.locks import feed_set_lock
-from feeds.models import Feed, Source
-from feeds.policy import PolicyError, default_and_enforce_source_watermark, enforce_source_spec_safety
-from openmagpie_schema.configs import SourceSpec, canonical_spec
-from openmagpie_schema.feed import SourceInput, SourceSetResult
-from sources import registry as source_registry
+_REGISTRY: dict[str, Connector[Any]] = {
+    RedditSubRedditConnector.kind: RedditSubRedditConnector(),
+    RssConnector.kind: RssConnector(),
+    HackerNewsFeedConnector.kind: HackerNewsFeedConnector(),
+    HackerNewsCommentConnector.kind: HackerNewsCommentConnector(),
+    TwitterSearchConnector.kind: TwitterSearchConnector(),
+    FacebookConnector.kind: FacebookConnector(),
+}
 
-
-class ConcurrentSetSourcesError(Exception):
-    """Another `set_sources` is already running on the same feed.
-    Raised by `SourceService.set_sources` when the per-feed try-lock
-    fails. View layer maps to 409; the operator retries."""
-
-
-logger = logging.getLogger("feeds")
-
-
-def _assert_connector_registered(specs: list[SourceSpec]) -> None:
-    """Reject input specs whose connector kind isn't loaded in this
-    deployment. The poll path is defensive about this (`KeyError` is
-    in `_RECOVERABLE_ERRORS` so an unknown kind logs and skips one
-    source instead of aborting the cycle), but a write-time check
-    means an operator sees a clean 400 with the offending kind named
-    instead of a row that silently never polls. Mirrors how feeds
-    `validate_config` runs at the boundary."""
-    missing: set[str] = set()
-    for spec in specs:
-        try:
-            source_registry.get(spec.kind)
-        except KeyError:
-            missing.add(spec.kind)
-    if missing:
-        raise PolicyError(
-            "no connector registered for source kind(s): "
-            + ", ".join(sorted(missing))
-            + " (this deployment is missing the connector; remove the offending sources or upgrade the server)"
-        )
+# Core kinds captured before any plugin registers; a plugin can't replace one.
+_BUILTIN_KINDS = frozenset(_REGISTRY)
 
 
-def _hash_spec(spec: SourceSpec) -> str:
-    """sha256 of the spec's canonical identity.
-
-    Routes through `openmagpie_schema.configs.canonical_spec` - the ONE definition of a
-    source's identity, shared with the magpie CLI's source-diff - so the hash and
-    the CLI's comparison can't drift. That canonicalizer uses sorted-key JSON over
-    `model_dump`, NOT declaration-order `model_dump_json`, so a field reorder /
-    alias on a SourceSpec subclass can't silently change every hash and break
-    dedup. Pinned by a regression test in `feeds/tests.py::SpecHashCanonicalTests`."""
-    return hashlib.sha256(canonical_spec(spec).encode("utf-8")).hexdigest()
+def get(kind: str) -> Connector[Any]:
+    """Raises KeyError if the kind has no registered connector."""
+    return _REGISTRY[kind]
 
 
-class SourceGlobal:
-    """Static methods only. Span all accounts. Scheduler / telemetry only."""
+def register(connector: Connector[Any]) -> None:
+    """Register a plugin connector by its `kind`. Raises if `kind` is empty (mirrors
+    the config registry) or a built-in (a plugin can't silently replace a core
+    connector; pick a distinct kind)."""
+    reject_bad_plugin_kind(
+        connector.kind, builtin_kinds=_BUILTIN_KINDS, noun="source", owner=f"{type(connector).__name__}.kind"
+    )
+    existing = _REGISTRY.get(connector.kind)
+    if existing is not None and type(existing) is not type(connector):
+        # Fail loud on a collision (two plugins claiming the same kind); re-registering
+        # the same connector class is idempotent. Silent last-wins would route polls to
+        # whichever hook loaded last.
+        raise ValueError(f"source kind {connector.kind!r} already has a connector ({type(existing).__name__})")
+    _REGISTRY[connector.kind] = connector
 
-    @staticmethod
-    def count_by_kind() -> dict[str, int]:
-        """{source kind: count} across all accounts (telemetry gauge)."""
-        rows = Source.objects.values("kind").annotate(n=Count("id"))
-        return {row["kind"]: row["n"] for row in rows}
 
+def register_source(connector: Connector[Any]) -> None:
+    """Register a plugin source KIND end to end in one call: the connector (by its
+    `kind`) AND its `payloads` (in `payload_registry`, per (kind, PAYLOAD_KIND)).
+    The connector + payload registries are an internal split; a plugin author
+    shouldn't juggle both, so this registers both. Use this from a plugin register
+    hook.
 
-class SourceService:
-    """Account-scoped service for Source CRUD bound to a Feed."""
+    Validate-then-mutate: the payload classes are checked BEFORE either registry is
+    touched. The plugin loader swallows a hook's exception, so a half-registration
+    (connector present, payloads absent, a realistic mistake such as a payload class
+    missing its `sample()` override) would otherwise boot silently, and the kind would
+    pass the write gate, poll + store items, then fail EVERY run permanently at
+    hydration. `require_valid_payloads` is pure, so if it raises nothing is registered;
+    `register` then applies its own built-in-kind guard before its mutation, and the
+    pre-validated `payload_registry.register` can't fail after it."""
+    from sources import payload_registry
 
-    Global = SourceGlobal
-
-    def __init__(self, *, account_id: str) -> None:
-        if not account_id:
-            raise ValueError("SourceService requires account_id")
-        self.account_id = account_id
-
-    def _assert_scope(self, account_id: str, what: str) -> None:
-        if account_id != self.account_id:
-            raise ValueError(f"{what} account_id mismatch: {account_id!r} not in scope {self.account_id!r}")
-
-    def _assert_curated(self, feed: Feed) -> None:
-        self._assert_scope(str(feed.account_id), "feed")
-        if feed.kind != "curated":
-            raise PolicyError(f"sources are only supported on curated feeds (got kind={feed.kind!r})")
-
-    def _scoped(self, feed: Feed):
-        return Source.objects.filter(account_id=self.account_id, feed_id=str(feed.id))
-
-    def list(self, feed: Feed) -> list[Source]:
-        self._assert_scope(str(feed.account_id), "feed")
-        return list(self._scoped(feed).order_by("id"))
-
-    def count(self, feed: Feed) -> int:
-        self._assert_scope(str(feed.account_id), "feed")
-        return self._scoped(feed).count()
-
-    def iter_for_poll(self, feed: Feed, *, exclude_kinds: tuple[str, ...] = ()) -> Iterator[Source]:
-        """Stream this feed's sources in RANDOM order for one poll cycle,
-        optionally excluding kinds the caller polls separately (e.g.
-        reddit_subreddit, streamed via `iter_by_kind` for combined fetching).
-
-        Random (`ORDER BY RANDOM()`), not for aesthetics: it
-        decorrelates which sources fail from their POSITION in the
-        cycle. Many sources sit behind shared infra (one CMS / CDN)
-        that rate-limits our egress IP under a burst ; with a FIXED
-        order the same unlucky sources past that threshold fail every
-        poll and never record. Reshuffling per cycle moves the danger
-        zone each time, so over a few polls every source gets a clean
-        run. `.iterator()` streams instead of materializing the full
-        row set (a feed can carry 1000+ sources)."""
-        self._assert_scope(str(feed.account_id), "feed")
-        qs = self._scoped(feed)
-        if exclude_kinds:
-            qs = qs.exclude(kind__in=exclude_kinds)
-        return qs.order_by("?").iterator()
-
-    def iter_by_kind(self, feed: Feed, kind: str) -> Iterator[Source]:
-        """Stream this feed's sources of one kind in RANDOM order, for batched
-        connectors (e.g. reddit) that pack sources into combined requests. Like
-        `iter_for_poll` it `.iterator()`-streams (a feed can carry 1000+ sources
-        of one kind), so the caller fills budget-bounded chunks on the fly rather
-        than materializing the whole set. The `(account_id, feed_id)` index
-        prefix narrows to the feed ; the `kind` filter runs on that per-feed set
-        (no dedicated kind index needed)."""
-        self._assert_scope(str(feed.account_id), "feed")
-        return self._scoped(feed).filter(kind=kind).order_by("?").iterator()
-
-    def advance_watermark(self, source: Source, value: datetime) -> int:
-        """Move `last_event_at` strictly forward on one Source row.
-
-        The `last_event_at__lt=value` guard makes the UPDATE monotonic
-        at the DB so a stale poll (out-of-order completion under
-        concurrent pollers, or any future caller outside `poll_lock`)
-        can't clobber a newer watermark. A NULL watermark also matches
-        (`isnull=True`): the feeds.policy invariant says a row can't be
-        NULL, but if one ever is this BOOTSTRAPS it to `value` (its
-        first-seen newest) so it self-heals instead of staying stuck
-        re-fetching every cycle - a NULL has no "newer", so bootstrapping
-        can't break monotonicity. Equivalent guard for an
-        operator-initiated backfill: it's a different code path
-        (`rewind_watermark`, future) and would bypass this method.
-
-        Scoped by `(account_id, id)` so a stale Source pointer can't
-        update across tenants. Returns the row count affected
-        (0 = no-op: already past `value`, or not in scope). Pure
-        column UPDATE, no JSONB rewrite."""
-        return (
-            Source.objects.filter(account_id=self.account_id, id=source.id)
-            .filter(Q(last_event_at__lt=value) | Q(last_event_at__isnull=True))
-            .update(last_event_at=value)
-        )
-
-    def delete_for_feed(self, feed: Feed) -> int:
-        """Drop every Source row attached to a feed; used by
-        FeedService.delete to cascade. Idempotent."""
-        self._assert_scope(str(feed.account_id), "feed")
-        deleted, _ = self._scoped(feed).delete()
-        return deleted
-
-    def get_by_id(self, source_id: str, /) -> Source:
-        """One source by its OWN id (account-scoped, no feed needed). Raises
-        `Source.DoesNotExist` on miss / another account's. Backs the by-own-id
-        detail route `/v1/feed-sources/<id>` ; the feed it belongs to is read off
-        the returned row, not supplied by the caller."""
-        return Source.objects.get(id=source_id, account_id=self.account_id)
-
-    def remove_by_id(self, source_id: str, /) -> int:
-        """Delete one source by its OWN id (account-scoped). Resolves the source,
-        verifies its owning feed is curated, then deletes. Raises
-        `Source.DoesNotExist` if absent / another account's (HTTP -> 404) and
-        `PolicyError` if the feed isn't curated (HTTP -> 400), the same guard the
-        feed-scoped set path runs, checked here rather than assumed. Returns the
-        delete count (1 ; 0 only if a concurrent delete won the race). Backs
-        `DELETE /v1/feed-sources/<id>`."""
-        source = self.get_by_id(source_id)
-        try:
-            feed = Feed.objects.get(id=source.feed_id, account_id=self.account_id)
-        except Feed.DoesNotExist as exc:
-            # Race: the feed (and its sources, via FeedService.delete's atomic
-            # cleanup) was deleted between resolving the source and here. The
-            # source is gone too, so 404 is the truthful answer.
-            raise Source.DoesNotExist from exc
-        self._assert_curated(feed)
-        deleted, _ = source.delete()
-        return deleted
-
-    def set_sources(
-        self,
-        feed: Feed,
-        items: builtins.list[SourceInput],
-        *,
-        dry_run: bool = False,
-    ) -> SourceSetResult:
-        """Replace the feed's sources with `items`. Additive + drops
-        missing + preserves watermarks on rows that persist.
-
-        Dedup by spec_hash on the input list so a script that emitted
-        the same spec twice doesn't trip the unique constraint. First
-        occurrence wins for meta/field_map values; subsequent
-        duplicates are logged at WARNING so the operator can spot a
-        scrape script that's silently dropping data."""
-        self._assert_curated(feed)
-        specs = [item.spec for item in items]
-        _assert_connector_registered(specs)
-        enforce_source_spec_safety(specs)
-
-        new_by_hash: dict[str, SourceInput] = {}
-        for item in items:
-            h = _hash_spec(item.spec)
-            if h in new_by_hash:
-                # Silent first-wins would mask scraper bugs (e.g. two
-                # entries of the same URL with different `meta` tags).
-                # Surface it.
-                logger.warning(
-                    "set_sources: duplicate input spec %r on feed %s ; keeping first occurrence, dropping later (meta=%r, field_map=%r)",
-                    item.spec.display(),
-                    feed.id,
-                    item.meta,
-                    item.field_map,
-                )
-                continue
-            new_by_hash[h] = item
-        new_hashes = set(new_by_hash)
-
-        # Dry-run path is read-only and unauthoritative ; intentionally
-        # skips the lock and reports a snapshot diff. A real run must
-        # take the snapshot UNDER the lock (otherwise two concurrent
-        # operators each compute their diff against the pre-A state,
-        # and B's apply hits IntegrityError on rows A inserted, or
-        # silently deletes rows A added).
-        if dry_run:
-            existing_hashes = set(self._scoped(feed).values_list("spec_hash", flat=True))
-            return SourceSetResult(
-                added=len(new_hashes - existing_hashes),
-                removed=len(existing_hashes - new_hashes),
-                persisted=len(new_hashes & existing_hashes),
-                source_count=len(new_hashes),
-            )
-
-        # Serialize concurrent set_sources on the same feed and take
-        # the snapshot inside the lock so the diff is authoritative.
-        # Loser of the race gets a retry-friendly 409.
-        with feed_set_lock(str(feed.id)) as acquired:
-            if not acquired:
-                raise ConcurrentSetSourcesError(
-                    f"another set-sources is in progress for feed {feed.id}; retry in a moment"
-                )
-            with transaction.atomic():
-                existing: dict[str, tuple[dict, dict]] = {
-                    row["spec_hash"]: (row["meta"] or {}, row["field_map"] or {})
-                    for row in self._scoped(feed).values("spec_hash", "meta", "field_map")
-                }
-                existing_hashes = set(existing)
-
-                added_hashes = new_hashes - existing_hashes
-                removed_hashes = existing_hashes - new_hashes
-                persisted_hashes = existing_hashes & new_hashes
-
-                if removed_hashes:
-                    self._scoped(feed).filter(spec_hash__in=removed_hashes).delete()
-                if added_hashes:
-                    # `ignore_conflicts=True` is a belt against TTL
-                    # expiry: the lock auto-releases after
-                    # `FEED_SET_LOCK_TIMEOUT_SECONDS` (60s), so a
-                    # pathological bulk apply over the timeout could
-                    # let a second writer in mid-flight and the two
-                    # inserts could collide on `(account_id, feed_id,
-                    # spec_hash)`. Under the lock + post-lock snapshot
-                    # the row sets are normally disjoint by
-                    # construction, so the ignore is a no-op on the
-                    # happy path ; it only matters when the TTL gave
-                    # up before we did.
-                    Source.objects.bulk_create(
-                        [
-                            Source(
-                                id=str(ulid.ulid()),
-                                account_id=self.account_id,
-                                feed_id=str(feed.id),
-                                kind=new_by_hash[h].spec.kind,
-                                spec=new_by_hash[h].spec.model_dump(mode="json"),
-                                spec_hash=h,
-                                last_event_at=default_and_enforce_source_watermark(new_by_hash[h].last_event_at),
-                                meta=new_by_hash[h].meta,
-                                field_map=new_by_hash[h].field_map,
-                            )
-                            for h in added_hashes
-                        ],
-                        ignore_conflicts=True,
-                    )
-                # Persisted rows: refresh meta + field_map ONLY where
-                # the input actually changed them. Skipping unchanged
-                # rows turns a 1000-source no-op re-import from N
-                # UPDATEs into zero. Watermarks (last_event_at) are
-                # never touched here. This change surface (spec via
-                # spec_hash + meta + field_map, NOT the watermark) is
-                # captured by `openmagpie_schema.configs.source_identity`,
-                # which the magpie CLI's `feed edit` warning diffs on -
-                # keep this reconcile in sync with that definition.
-                dirty_hashes = [
-                    h for h in persisted_hashes if existing[h] != (new_by_hash[h].meta, new_by_hash[h].field_map)
-                ]
-                for h in dirty_hashes:
-                    desired = new_by_hash[h]
-                    self._scoped(feed).filter(spec_hash=h).update(
-                        meta=desired.meta,
-                        field_map=desired.field_map,
-                    )
-
-                return SourceSetResult(
-                    added=len(added_hashes),
-                    removed=len(removed_hashes),
-                    persisted=len(persisted_hashes),
-                    source_count=len(new_hashes),
-                )
+    payload_registry.require_valid_payloads(connector.payloads)
+    register(connector)
+    # register() re-runs require_valid_payloads internally; the up-front call above is
+    # the deliberate pre-check (cheap, pure) that makes this whole sequence
+    # all-or-nothing. It isn't redundant: it's what lets register(connector) run first.
+    payload_registry.register(connector.kind, connector.payloads)
