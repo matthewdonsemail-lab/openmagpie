@@ -43,6 +43,8 @@ class NewRepoEventPayload(SourcePayload):
     `forks`, `open_issues`, `language`, `topics`, `owner`, `homepage`,
     `license`, `readme` (full text, when fetched), `event_type`
     ("create" | "push"), `pushed_at`, `created_at`, `updated_at`.
+    `actor_login`, `actor_id`, `actor_avatar_url` capture the person who
+    triggered the event (the GitHub user who created the repo or pushed).
     """
 
     PAYLOAD_KIND: ClassVar[str] = "new_repo_event"
@@ -61,6 +63,10 @@ class NewRepoEventPayload(SourcePayload):
     pushed_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # Actor (the person who triggered the event)
+    actor_login: str = ""
+    actor_id: int = 0
+    actor_avatar_url: str = ""
 
     model_config = {"frozen": True, "extra": "ignore"}
 
@@ -93,6 +99,9 @@ class NewRepoEventPayload(SourcePayload):
             pushed_at="2026-05-27T12:00:00Z",
             created_at="2026-05-27T12:00:00Z",
             updated_at="2026-05-27T12:00:00Z",
+            actor_login=f"example-user-{n}",
+            actor_id=1000 + n,
+            actor_avatar_url=f"https://avatars.githubusercontent.com/u/1000{n}",
         )
 
     @classmethod
@@ -104,6 +113,7 @@ class NewRepoEventPayload(SourcePayload):
         event_type: str = "create",
         readme: str | None = None,
         event_id: str | None = None,
+        actor: dict[str, Any] | None = None,
     ) -> NewRepoEventPayload:
         """Map a GitHub API repo dict to a payload.
 
@@ -112,6 +122,9 @@ class NewRepoEventPayload(SourcePayload):
         an existing repo). `readme` is the raw README text when fetched.
         `event_id` is the /events event ID, recorded in the source-meta (not
         the external_id — that stays `full_name` for cross-connector dedup).
+        `actor` is the raw `/events` actor dict ({login, id, avatar_url,
+        url}); its fields are mapped to `actor_login` / `actor_id` /
+        `actor_avatar_url` so the *person* behind the event is visible.
         """
         full_name = str(repo.get("full_name") or "")
         owner_obj = repo.get("owner") or {}
@@ -122,6 +135,14 @@ class NewRepoEventPayload(SourcePayload):
         license_name = str(license_obj.get("spdx_id") or "") if isinstance(license_obj, dict) else ""
         description = str(repo.get("description") or "")
         readme_text = str(readme or "")
+
+        # Actor (the person who triggered the event). Raw shape from /events:
+        # {"login": "octocat", "id": 1, "node_id": "...", "avatar_url": "...",
+        #  "url": "https://api.github.com/users/octocat", ...}
+        actor_obj = actor if isinstance(actor, dict) else {}
+        actor_login = str(actor_obj.get("login") or "")
+        actor_id = int(actor_obj.get("id") or 0)
+        actor_avatar_url = str(actor_obj.get("avatar_url") or "")
 
         # Judgeable body: description + language + topics, then a README
         # excerpt when one exists (the engine scores title + content).
@@ -155,4 +176,7 @@ class NewRepoEventPayload(SourcePayload):
             pushed_at=str(repo.get("pushed_at") or ""),
             created_at=str(repo.get("created_at") or ""),
             updated_at=str(repo.get("updated_at") or ""),
+            actor_login=actor_login,
+            actor_id=actor_id,
+            actor_avatar_url=actor_avatar_url,
         )

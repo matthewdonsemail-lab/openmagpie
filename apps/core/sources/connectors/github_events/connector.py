@@ -141,6 +141,7 @@ class GitHubEventsConnector(BaseConnector[GitHubEventsSourceSpec]):
                     continue
 
                 readme = self._client.fetch_readme(repo_name)
+                actor = event.get("actor")  # {"login": "...", "id": ..., "avatar_url": "..."}
 
                 yield NewRepoEventPayload.from_create_event(
                     repo=meta,
@@ -148,6 +149,7 @@ class GitHubEventsConnector(BaseConnector[GitHubEventsSourceSpec]):
                     event_type="create",
                     readme=readme,
                     event_id=event_id,
+                    actor=actor,
                 )
 
             # PushEvent = fresh code pushed to an existing repo.
@@ -163,6 +165,7 @@ class GitHubEventsConnector(BaseConnector[GitHubEventsSourceSpec]):
                     continue
 
                 readme = self._client.fetch_readme(repo_name)
+                actor = event.get("actor")  # {"login": "...", "id": ..., "avatar_url": "..."}
 
                 yield NewRepoEventPayload.from_create_event(
                     repo=meta,
@@ -170,6 +173,7 @@ class GitHubEventsConnector(BaseConnector[GitHubEventsSourceSpec]):
                     event_type="push",
                     readme=readme,
                     event_id=event_id,
+                    actor=actor,
                 )
 
 

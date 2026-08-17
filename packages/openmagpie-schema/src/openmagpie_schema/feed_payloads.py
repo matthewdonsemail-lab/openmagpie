@@ -125,6 +125,10 @@ class NewRepoEventPayload(FeedItemPayload):
     pushed_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # Actor (the person who triggered the event)
+    actor_login: str = ""
+    actor_id: int = 0
+    actor_avatar_url: str = ""
 
 
 class NewRepoPayload(FeedItemPayload):
