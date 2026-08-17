@@ -188,6 +188,83 @@ class TwitterSearchSourceSpec(BaseModel):
         return f'X search: "{self.query}"'
 
 
+class GitHubSearchSourceSpec(BaseModel):
+    """Identity of one GitHub repository search stream. Bound to GitHubSearchConnector.
+
+    `query` is the GitHub repository search expression (the `q` parameter
+    accepted by `GET /search/repositories` — keywords, qualifiers like
+    `language:typescript`, `stars:>100`, `topic:openai`); it is REQUIRED and
+    NON-BLANK so a source always carries a server-side pre-filter before any
+    per-item LLM cost (same discipline as hn_comment / twitter_search: a
+    blank query would be the whole-repo firehose). `sort` picks the result
+    ordering: `stars` (most-starred first, the listener's default for a
+    ranked sweep) or `updated` (most recently updated first). `min_stars`
+    is a cheap numeric pre-filter the connector folds into the query (it is
+    also how we keep the default result window useful without a qualifier in
+    the operator's query). `count` caps the per-cycle fetch (GitHub's search
+    API allows up to 100 per page; the connector walks at most one page in
+    phase 1).
+    """
+
+    SOURCE_KIND: ClassVar[str] = "github_search"
+    URL_FIELDS: ClassVar[tuple[str, ...]] = ()  # no operator-supplied URL to SSRF-check
+
+    kind: Literal["github_search"] = "github_search"
+    query: str = Field(min_length=1)
+    sort: Literal["stars", "updated"] = "stars"
+    min_stars: int = Field(default=0, ge=0)
+    count: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("query")
+    @classmethod
+    def _query_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("github_search requires a non-blank query (the firehose guard)")
+        return v
+
+    def display(self) -> str:
+        return f'GitHub search: "{self.query}"'
+
+
+class GitHubEventsSourceSpec(BaseModel):
+    """Identity of one GitHub public /events radar stream. Bound to GitHubEventsConnector.
+
+    The /events endpoint is a rolling ~30-event window of public GitHub
+    activity — there is no durable cursor, so the loud sound is the
+    WATERMARK: the connector surfaces events newer than the source's
+    `last_event_at` and skips everything older. Events that fall off the
+    rolling window between polls are missed by design.
+
+    `event_types` filters the firehose to the event kinds worth enriching:
+    "create" (new repo: CreateEvent with ref_type=="repository", the
+    high-signal new-project radar) and "push" (fresh code pushed to an
+    existing repo). `include_pushes` defaults to False because a push on an
+    old repo is not a new-project signal; `min_stars` is a cheap
+    post-enrichment floor so the operator can skip the long tail.
+    """
+
+    SOURCE_KIND: ClassVar[str] = "github_events"
+    URL_FIELDS: ClassVar[tuple[str, ...]] = ()  # no operator-supplied URL to SSRF-check
+
+    kind: Literal["github_events"] = "github_events"
+    event_types: list[str] = Field(default_factory=lambda: ["create"])
+    include_pushes: bool = False
+    min_stars: int = Field(default=0, ge=0)
+
+    @field_validator("event_types")
+    @classmethod
+    def _known_event_types(cls, v: list[str]) -> list[str]:
+        known = {"create", "push"}
+        unknown = [t for t in v if t not in known]
+        if unknown:
+            raise ValueError(f"github_events event_types may only be {sorted(known)}, not {unknown}")
+        return v
+
+    def display(self) -> str:
+        return f"GitHub events radar: {', '.join(self.event_types)}"
+
+
 # The built-ins as a discriminated union over `kind` (defined before the plugin
 # fallback so the built-in kind set can be derived from it below). A built-in kind
 # with a malformed spec fails its typed member here and is rejected by the fallback,
@@ -197,7 +274,9 @@ _BuiltinSourceSpec = Annotated[
     | RssSourceSpec
     | HackerNewsFeedSourceSpec
     | HackerNewsCommentSourceSpec
-    | TwitterSearchSourceSpec,
+    | TwitterSearchSourceSpec
+    | GitHubSearchSourceSpec
+    | GitHubEventsSourceSpec,
     Field(discriminator="kind"),
 ]
 

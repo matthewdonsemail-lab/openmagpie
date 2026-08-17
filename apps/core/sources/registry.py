@@ -11,6 +11,8 @@ from typing import Any
 from common.models import reject_bad_plugin_kind
 from sources.connectors import (
     Connector,
+    GitHubEventsConnector,
+    GitHubSearchConnector,
     HackerNewsCommentConnector,
     HackerNewsFeedConnector,
     RedditSubRedditConnector,
@@ -24,6 +26,8 @@ _REGISTRY: dict[str, Connector[Any]] = {
     HackerNewsFeedConnector.kind: HackerNewsFeedConnector(),
     HackerNewsCommentConnector.kind: HackerNewsCommentConnector(),
     TwitterSearchConnector.kind: TwitterSearchConnector(),
+    GitHubSearchConnector.kind: GitHubSearchConnector(),
+    GitHubEventsConnector.kind: GitHubEventsConnector(),
 }
 
 # Core kinds captured before any plugin registers; a plugin can't replace one.

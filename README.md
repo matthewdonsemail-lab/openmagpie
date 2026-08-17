@@ -36,7 +36,7 @@ You curate sources into a feed, write a natural-language description of what's r
 
 OpenMagpie listens wherever communities are having those conversations.
 
-- **Public discussion (today):** Reddit, Hacker News, and any RSS or Atom feed (news, blogs, Substack publications, and forums that publish feeds).
+- **Public discussion (today):** Reddit, Hacker News, GitHub (repository search + new-repo events), and any RSS or Atom feed (news, blogs, Substack publications, and forums that publish feeds).
 - **Communities you're in (roadmap):** Slack workspaces and LinkedIn you already belong to, so you catch relevant threads in the groups where you participate, no admin or app install required.
 
 ## Quickstart
@@ -147,7 +147,7 @@ graph TD
         HN[Hacker News]
         SLACK[Slack]
         LINKEDIN[LinkedIn]
-        GITHUB[GitHub]
+        GITHUB[GitHub<br/>search + events]
     end
 
     subgraph OpenMagpie
@@ -169,7 +169,7 @@ graph TD
     HN --> FEED
     SLACK -. planned .-> FEED
     LINKEDIN -. planned .-> FEED
-    GITHUB -. planned .-> FEED
+    GITHUB --> FEED
 
     FEED -- "new items" --> WATCH
     WATCH -- "action chain" --> FILTER
@@ -209,6 +209,35 @@ make local-cli ARGS="delivery get <delivery_id>"                    # one call i
 
 See [AGENTS.md](AGENTS.md) for the design conventions (char pointers, typed-blob pattern, the trigger/drain/flush execution model).
 
+### GitHub connectors
+
+OpenMagpie ships two GitHub connectors that work together:
+
+**`github_search`** — repository search via the public Search API (`GET /search/repositories`). You write a query with any GitHub qualifier (`language:typescript`, `topic:openai`, `stars:>100`) and the connector yields repos matching it, sorted by stars or last-updated. The LLM then scores each repo's description, language, topics, and README against your natural-language criteria. Best for ranking existing projects against your compatibility matrix.
+
+**`github_events`** — new-repo radar via the public `/events` firehose. Polls the rolling ~30-event window, filters for `CreateEvent` + `ref_type: "repository"` (brand-new repos), enriches each with metadata and README, and yields the result. The watermark is `last_event_at` (no durable cursor, so events between polls that fall off the window are missed by design — same limitation as octoradar). Best for catching new projects the moment they're created.
+
+Both connectors share the same error taxonomy, a common `GitHubClient`/`GitHubEventsClient` wrapper (httpx, optional `GITHUB_TOKEN` env var), and the same `NewRepoPayload`/`NewRepoEventPayload` shape. Payloads carry `full_name`, `stars`, `forks`, `language`, `topics`, `license`, `owner`, `description`, and README excerpt — everything the LLM needs to judge fit. A repo discovered first by radar, then later by search, collapses to one FeedItem (same `external_id` = `full_name`).
+
+```json
+{
+  "kind": "github_search",
+  "query": "tsoa OR hono OR qwik lang:typescript stars:>100",
+  "sort": "stars",
+  "min_stars": 100,
+  "count": 20
+}
+```
+
+```json
+{
+  "kind": "github_events",
+  "event_types": ["create"],
+  "include_pushes": false,
+  "min_stars": 0
+}
+```
+
 ## Why self-host it
 
 Social listening is a crowded market (Brand24, Mention, Octolens, Syften, and tools like OutX that pair monitoring with AI-drafted replies). They are all closed SaaS behind a paid plan, a trial, or a sales demo, and the few genuinely free options are basic mention notifiers, not full listening. OpenMagpie is the open, self-hostable exception: run it on your own box with your own model for the cost of the hardware.
@@ -222,7 +251,7 @@ Social listening is a crowded market (Brand24, Mention, Octolens, Syften, and to
 
 | Layer | Shipped |
 |---|---|
-| Connectors | Reddit (`reddit_subreddit`), Hacker News (`hn_feed`, `hn_comment`), RSS/Atom (`rss`) |
+| Connectors | Reddit (`reddit_subreddit`), Hacker News (`hn_feed`, `hn_comment`), GitHub (`github_search`, `github_events`), RSS/Atom (`rss`) |
 | Engines | Any OpenAI-compatible `/v1` API: Ollama, vLLM, llama.cpp, LM Studio, OpenAI, ... |
 | Action kinds | `semantic_filter` (LLM-judged), `webhook`, `log` |
 | Delivery modes | instant, digest |
@@ -231,7 +260,7 @@ Social listening is a crowded market (Brand24, Mention, Octolens, Syften, and to
 
 ## Roadmap
 
-- **More connectors**: Slack, LinkedIn, GitHub, Bluesky, Mastodon, and X.
+- **More connectors**: Slack, LinkedIn, Bluesky, Mastodon, and X.
 - **More engines**: Anthropic, OpenAI, and a keyword engine behind the same `Engine` Protocol.
 - **Learns from feedback**: thumbs up/down on past matches become few-shot examples for the next pass.
 - **Run-history in the payload**: the upstream filter score and chain provenance as an opt-in webhook field.
@@ -254,7 +283,7 @@ apps/
     common/                   BaseModel (ULID PK + timestamps), ULIDField, locks, db ceilings, /healthz
     accounts/                 User / Account / UserProfile + services + AccountScopedAPIView mixin
     auth_api/                 signup / login / logout / me + tokens/* + device-flow handshake (DRF)
-    sources/                  Connectors (Reddit, Hacker News, RSS/Atom) + SourcePayload classes + registry
+    sources/                  Connectors (Reddit, Hacker News, GitHub, RSS/Atom) + SourcePayload classes + registry
     feeds/                    Feed + Source + FeedItem models + poll orchestrator + item log
     engine/                   Engine Protocol + OpenAICompatEngine + registry (+ probe)
     watches/                  Watch + WatchFeed + WatchPath + WatchAction + WatchActionRun + WatchActionDelivery
