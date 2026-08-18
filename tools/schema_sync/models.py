@@ -15,6 +15,7 @@ Three lists, kept separate from the build/guard logic in generate.py so the
 from openmagpie_schema.auth import AuthUser
 from openmagpie_schema.backfill import BackfillJob, BackfillListResponse, BackfillPreview
 from openmagpie_schema.configs import (
+    FacebookGroupSourceSpec,
     HackerNewsCommentSourceSpec,
     HackerNewsFeedSourceSpec,
     RedditSubredditSourceSpec,
@@ -104,6 +105,7 @@ CONTRACT_MODELS = [
     WebhookConfig,
     WebhookResult,
     # Source specs (a discriminated union; also reached via SourceFields.spec)
+    FacebookGroupSourceSpec,
     RedditSubredditSourceSpec,
     RssSourceSpec,
     HackerNewsFeedSourceSpec,
@@ -177,6 +179,7 @@ INPUT_MODELS = [
     WebhookConfig,
     RedditSubredditSourceSpec,
     RssSourceSpec,
+    FacebookGroupSourceSpec,
     HackerNewsFeedSourceSpec,
     HackerNewsCommentSourceSpec,
 ]

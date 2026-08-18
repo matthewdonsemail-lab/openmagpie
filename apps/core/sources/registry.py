@@ -11,6 +11,7 @@ from typing import Any
 from common.models import reject_bad_plugin_kind
 from sources.connectors import (
     Connector,
+    FacebookGroupConnector,
     HackerNewsCommentConnector,
     HackerNewsFeedConnector,
     RedditSubRedditConnector,
@@ -19,6 +20,7 @@ from sources.connectors import (
 )
 
 _REGISTRY: dict[str, Connector[Any]] = {
+    FacebookGroupConnector.kind: FacebookGroupConnector(),
     RedditSubRedditConnector.kind: RedditSubRedditConnector(),
     RssConnector.kind: RssConnector(),
     HackerNewsFeedConnector.kind: HackerNewsFeedConnector(),

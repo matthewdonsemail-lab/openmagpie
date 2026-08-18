@@ -188,6 +188,39 @@ class TwitterSearchSourceSpec(BaseModel):
         return f'X search: "{self.query}"'
 
 
+class FacebookGroupSourceSpec(BaseModel):
+    """Identity of one Facebook group search stream. Bound to FacebookGroupConnector.
+
+    `group_ids` is the list of Facebook group IDs to search; at least one is
+    required. `terms` are optional search keywords to filter posts within the
+    group. `count` caps the per-cycle fetch.
+    """
+
+    SOURCE_KIND: ClassVar[str] = "facebook_group"
+    URL_FIELDS: ClassVar[tuple[str, ...]] = ()  # no operator-supplied URL to SSRF-check
+
+    kind: Literal["facebook_group"] = "facebook_group"
+    group_ids: list[str] = Field(min_length=1)
+    terms: list[str] = Field(default_factory=list)
+    count: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("group_ids")
+    @classmethod
+    def _group_ids_not_empty(cls, v: list[str]) -> list[str]:
+        stripped = [s.strip() for s in v if s.strip()]
+        if not stripped:
+            raise ValueError("facebook_group requires at least one non-empty group_id")
+        return stripped
+
+    @field_validator("terms")
+    @classmethod
+    def _terms_clean(cls, v: list[str]) -> list[str]:
+        return [s.strip() for s in v if s.strip()]
+
+    def display(self) -> str:
+        return f'Facebook group search: {", ".join(self.group_ids[:3])}'
+
+
 # The built-ins as a discriminated union over `kind` (defined before the plugin
 # fallback so the built-in kind set can be derived from it below). A built-in kind
 # with a malformed spec fails its typed member here and is rejected by the fallback,
@@ -197,7 +230,8 @@ _BuiltinSourceSpec = Annotated[
     | RssSourceSpec
     | HackerNewsFeedSourceSpec
     | HackerNewsCommentSourceSpec
-    | TwitterSearchSourceSpec,
+    | TwitterSearchSourceSpec
+    | FacebookGroupSourceSpec,
     Field(discriminator="kind"),
 ]
 

@@ -20,6 +20,7 @@ from feeds.policy import PolicyError, enforce_source_spec_safety
 from feeds.services.sources import _assert_connector_registered
 from openmagpie_schema.configs import (
     _BUILTIN_SOURCE_KINDS,
+    FacebookGroupSourceSpec,
     HackerNewsCommentSourceSpec,
     HackerNewsFeedSourceSpec,
     PluginSourceSpec,
@@ -296,7 +297,7 @@ class RegisterSourceFacadeTests(SimpleTestCase):
 
 class BuiltinSourceKindInvariantTests(SimpleTestCase):
     """The set the plugin fallback rejects is DERIVED from the built-in union, so it
-    can't drift. Pin that: it equals the SOURCE_KIND of every union member (add a 5th
+    can't drift. Pin that: it equals the SOURCE_KIND of every union member (add a 6th
     built-in spec but forget to wire it and this fails loud, mirroring the action
     side, which derives its set from the WatchActionKind enum)."""
 
@@ -319,6 +320,7 @@ class BuiltinSourceKindInvariantTests(SimpleTestCase):
                     HackerNewsFeedSourceSpec.SOURCE_KIND,
                     HackerNewsCommentSourceSpec.SOURCE_KIND,
                     TwitterSearchSourceSpec.SOURCE_KIND,
+                    FacebookGroupSourceSpec.SOURCE_KIND,
                 }
             ),
         )

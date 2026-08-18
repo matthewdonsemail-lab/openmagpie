@@ -97,6 +97,22 @@ class NewTweetPayload(FeedItemPayload):
     media: list[dict[str, object]] = []
 
 
+class NewFacebookPostPayload(FeedItemPayload):
+    """`new_fb_post`: one Facebook group post (FacebookGroupConnector, unofficial
+    Camofox route). `content` is the post body (the engine's judgeable text);
+    `title` is empty (posts have no headline). The facebook-camofox-client
+    normalized record shape is carried as typed fields: `author` (display
+    name), `group_id` (the Facebook group ID, also the within-kind source
+    slug), `metrics` (likes/comments/shares), `matched_terms` (which search
+    terms this post matched)."""
+
+    kind: Literal["new_fb_post"]  # required, so a non-facebook dump can't match here
+    author: str = ""
+    group_id: str = ""
+    metrics: dict[str, int | None] = {}
+    matched_terms: list[str] = []
+
+
 # Tried left-to-right so a dump resolves to its concrete variant (matched on the
 # required `kind` literal) and only falls to the permissive base when no variant
 # claims it. Variants REQUIRE their `kind`, so an empty / kind-less dict can't
@@ -112,6 +128,7 @@ FeedItemData = Annotated[
     | HackerNewsFeedPayload
     | HackerNewsCommentPayload
     | NewTweetPayload
+    | NewFacebookPostPayload
     | FeedItemPayload,
     Field(union_mode="left_to_right"),
 ]

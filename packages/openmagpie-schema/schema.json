@@ -686,6 +686,44 @@
       "title": "ExtractStatus",
       "type": "string"
     },
+    "FacebookGroupSourceSpec": {
+      "description": "Identity of one Facebook group search stream. Bound to FacebookGroupConnector.\n\n`group_ids` is the list of Facebook group IDs to search; at least one is\nrequired. `terms` are optional search keywords to filter posts within the\ngroup. `count` caps the per-cycle fetch.",
+      "properties": {
+        "count": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "group_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Group Ids",
+          "type": "array"
+        },
+        "kind": {
+          "const": "facebook_group",
+          "default": "facebook_group",
+          "title": "Kind",
+          "type": "string"
+        },
+        "terms": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Terms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "group_ids"
+      ],
+      "title": "FacebookGroupSourceSpec",
+      "type": "object"
+    },
     "FeedConfigSummary": {
       "description": "Display-only projection of a feed config for the CLI preview.\n\nBuilt server-side from the typed config (the only place that knows\nthe schema) so the CLI prints it without parsing the `data` blob.\nCurated feeds emit an empty summary because all per-source state\nsurfaces via FeedView.sources / source_count; the class stays as\na hook for future kinds that have non-source-shaped config to\nproject for the CLI.",
       "properties": {},
@@ -837,6 +875,9 @@
             },
             {
               "$ref": "#/$defs/NewTweetPayload"
+            },
+            {
+              "$ref": "#/$defs/NewFacebookPostPayload"
             },
             {
               "$ref": "#/$defs/FeedItemPayload"
@@ -1655,6 +1696,103 @@
         "state"
       ],
       "title": "LogRunWire",
+      "type": "object"
+    },
+    "NewFacebookPostPayload": {
+      "additionalProperties": true,
+      "description": "`new_fb_post`: one Facebook group post (FacebookGroupConnector, unofficial\nCamofox route). `content` is the post body (the engine's judgeable text);\n`title` is empty (posts have no headline). The facebook-camofox-client\nnormalized record shape is carried as typed fields: `author` (display\nname), `group_id` (the Facebook group ID, also the within-kind source\nslug), `metrics` (likes/comments/shares), `matched_terms` (which search\nterms this post matched).",
+      "properties": {
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "content": {
+          "default": "",
+          "title": "Content",
+          "type": "string"
+        },
+        "external_id": {
+          "default": "",
+          "title": "External Id",
+          "type": "string"
+        },
+        "external_url": {
+          "default": "",
+          "title": "External Url",
+          "type": "string"
+        },
+        "group_id": {
+          "default": "",
+          "title": "Group Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "new_fb_post",
+          "title": "Kind",
+          "type": "string"
+        },
+        "matched_terms": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Terms",
+          "type": "array"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default": {},
+          "title": "Metrics",
+          "type": "object"
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Occurred At"
+        },
+        "parent_external_id": {
+          "default": "",
+          "title": "Parent External Id",
+          "type": "string"
+        },
+        "source": {
+          "default": "",
+          "title": "Source",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "NewFacebookPostPayload",
       "type": "object"
     },
     "NewRedditPostPayload": {
@@ -2558,6 +2696,7 @@
             {
               "discriminator": {
                 "mapping": {
+                  "facebook_group": "#/$defs/FacebookGroupSourceSpec",
                   "hn_comment": "#/$defs/HackerNewsCommentSourceSpec",
                   "hn_feed": "#/$defs/HackerNewsFeedSourceSpec",
                   "reddit_subreddit": "#/$defs/RedditSubredditSourceSpec",
@@ -2581,6 +2720,9 @@
                 },
                 {
                   "$ref": "#/$defs/TwitterSearchSourceSpec"
+                },
+                {
+                  "$ref": "#/$defs/FacebookGroupSourceSpec"
                 }
               ]
             },
@@ -2704,6 +2846,7 @@
             {
               "discriminator": {
                 "mapping": {
+                  "facebook_group": "#/$defs/FacebookGroupSourceSpec",
                   "hn_comment": "#/$defs/HackerNewsCommentSourceSpec",
                   "hn_feed": "#/$defs/HackerNewsFeedSourceSpec",
                   "reddit_subreddit": "#/$defs/RedditSubredditSourceSpec",
@@ -2727,6 +2870,9 @@
                 },
                 {
                   "$ref": "#/$defs/TwitterSearchSourceSpec"
+                },
+                {
+                  "$ref": "#/$defs/FacebookGroupSourceSpec"
                 }
               ]
             },
@@ -4130,6 +4276,9 @@
     },
     {
       "$ref": "#/$defs/WebhookResult"
+    },
+    {
+      "$ref": "#/$defs/FacebookGroupSourceSpec"
     },
     {
       "$ref": "#/$defs/RedditSubredditSourceSpec"
